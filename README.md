@@ -24,6 +24,10 @@ Rather than building isolated virtual machines, the goal was to create an interc
 
 # Network Architecture
 
+## Logical Network Architecture
+
+![Enterprise Cybersecurity Home Lab Network Architecture](diagrams/network-architecture.jpeg)
+
 The primary lab network uses:
 
 ```text
