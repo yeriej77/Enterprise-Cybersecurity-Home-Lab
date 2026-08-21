@@ -57,7 +57,7 @@ Network segmentation was implemented using VLANs.
 | ------- | ---------- | -------------------------- |
 | VLAN 10 | LAB-LAN    | Primary lab infrastructure |
 | VLAN 20 | IOT        | IoT and smart devices      |
-| VLAN 99 | Management | Infrastructure management  |
+| VLAN 99 | Management | Planned infrastructure management network |
 | VLAN 1  | Default    | Limited/unused             |
 
 A trunk between the Cisco switch and Proxmox carries the required VLANs to pfSense and virtualized infrastructure.
