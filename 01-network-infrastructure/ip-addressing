@@ -1,0 +1,1164 @@
+# IP Addressing and Network Services
+
+## Overview
+
+The home lab uses a structured IPv4 addressing plan to keep critical infrastructure predictable while allowing client systems to receive network configuration dynamically.
+
+The primary trusted network is:
+
+```text
+10.0.0.0/24
+```
+
+This network is currently associated with **VLAN 10 — LAB-LAN** and contains the majority of the lab's servers, management systems, and domain-connected devices.
+
+The environment uses:
+
+- **pfSense** as the default gateway and router
+- **DC1** for Active Directory-integrated DNS and DHCP
+- **Static IP addressing** for critical infrastructure
+- **DHCP** for client systems
+- A separate `10.8.0.0/24` network for OpenVPN remote-access clients
+
+---
+
+# Primary LAB-LAN Network
+
+| Setting | Value |
+|---|---|
+| Network | `10.0.0.0/24` |
+| Subnet Mask | `255.255.255.0` |
+| Default Gateway | `10.0.0.1` |
+| Internal DNS Server | `10.0.0.6` |
+| Active Directory Domain | `ad.home.com` |
+| NetBIOS Domain | `HOMELAB` |
+| VLAN | VLAN 10 — LAB-LAN |
+
+With a `/24` subnet mask, the network provides addresses within:
+
+```text
+10.0.0.0 - 10.0.0.255
+```
+
+The normally usable host range is:
+
+```text
+10.0.0.1 - 10.0.0.254
+```
+
+where:
+
+```text
+10.0.0.0   = Network address
+10.0.0.255 = Broadcast address
+```
+
+---
+
+# Infrastructure Addressing
+
+Critical infrastructure uses predictable IP addresses so that services remain reachable after system reboots, upgrades, and network changes.
+
+| Device | Hostname | IP Address | Role | Addressing |
+|---|---|---:|---|---|
+| pfSense | pfSense | `10.0.0.1` | Router / Firewall / VPN Gateway | Static |
+| Cisco Switch | SW1 | `10.0.0.2` | Managed Layer 2 Switch | Static |
+| Proxmox | pve | `10.0.0.5` | Virtualization Host | Static |
+| Domain Controller | DC1 | `10.0.0.6` | AD / DNS / DHCP | Static |
+| Wazuh Server | wazuh01 | `10.0.0.7` | SIEM | Static |
+| Nessus | Nessus | `10.0.0.8` | Vulnerability Scanner | Planned |
+| Client01 | Client01 | `10.0.0.100` | Domain-Joined Windows Client | Client Address |
+| Jump PC | Jump PC | `10.0.0.101` | Administrative Workstation | Administrative Client |
+
+The lower portion of the subnet is primarily reserved for infrastructure systems.
+
+This makes important devices easier to identify during administration and troubleshooting.
+
+---
+
+# Addressing Layout
+
+The primary addressing design can be represented as:
+
+```text
+10.0.0.0/24
+│
+├── 10.0.0.1      pfSense
+│                  Router / Firewall
+│
+├── 10.0.0.2      SW1
+│                  Cisco Switch
+│
+├── 10.0.0.5      pve
+│                  Proxmox Hypervisor
+│
+├── 10.0.0.6      DC1
+│                  AD / DNS / DHCP
+│
+├── 10.0.0.7      wazuh01
+│                  SIEM
+│
+├── 10.0.0.8      Nessus
+│                  Vulnerability Scanner
+│                  Planned
+│
+├── 10.0.0.100    Client01
+│                  Domain Workstation
+│
+└── 10.0.0.101    Jump PC
+                   Administrative Workstation
+```
+
+---
+
+# Why Infrastructure Uses Static IP Addresses
+
+Critical infrastructure must remain accessible at known addresses.
+
+For example, the domain controller is located at:
+
+```text
+10.0.0.6
+```
+
+Domain clients depend on DC1 for services including:
+
+- Active Directory
+- DNS
+- DHCP
+- Domain authentication
+- Group Policy
+- Internal hostname resolution
+
+If DC1 unexpectedly received a different IP address, multiple services could fail simultaneously.
+
+The same principle applies to pfSense.
+
+```text
+pfSense
+10.0.0.1
+```
+
+Because `10.0.0.1` is the default gateway, changing this address without updating clients would prevent systems from reaching networks outside their local subnet.
+
+---
+
+# Default Gateway
+
+The default gateway for VLAN 10 is:
+
+```text
+10.0.0.1
+```
+
+This address belongs to pfSense.
+
+A host can communicate directly with another host in the same subnet without using its default gateway.
+
+For example:
+
+```text
+Client01
+10.0.0.100
+     │
+     │ Same subnet
+     ▼
+DC1
+10.0.0.6
+```
+
+However, when a destination is outside `10.0.0.0/24`, traffic is sent to pfSense.
+
+```text
+Client01
+10.0.0.100
+     │
+     │ Destination outside local subnet
+     ▼
+pfSense
+10.0.0.1
+     │
+     ▼
+Routing / Firewall Decision
+     │
+     ├── Internet
+     ├── VPN
+     └── Other Routed Network
+```
+
+pfSense then determines how the traffic should be handled.
+
+---
+
+# pfSense Routing Role
+
+pfSense acts as the Layer 3 gateway for the lab.
+
+Its routing responsibilities include:
+
+- Default-gateway services
+- Internet routing
+- Network Address Translation
+- Firewall enforcement
+- Inter-VLAN routing
+- OpenVPN routing
+- Surfshark policy-based routing
+
+This makes pfSense the primary traffic-control point for communication leaving the local network.
+
+---
+
+# DNS Architecture
+
+Internal DNS is provided by the Windows Server domain controller.
+
+```text
+DNS Server: 10.0.0.6
+Hostname:   DC1
+Domain:     ad.home.com
+```
+
+DC1 hosts the Active Directory DNS zone:
+
+```text
+ad.home.com
+```
+
+Domain-connected Windows systems use DC1 as their DNS server.
+
+---
+
+# Why Active Directory Depends on DNS
+
+Active Directory uses DNS to locate domain controllers and domain services.
+
+For example, a Windows client attempting to locate a domain controller may query DNS records such as:
+
+```text
+_ldap._tcp.dc._msdcs.ad.home.com
+```
+
+These SRV records identify systems providing Active Directory services.
+
+Because of this dependency, domain clients should use the Active Directory DNS server rather than directly using a public DNS resolver.
+
+Correct:
+
+```text
+Client01 DNS Server
+10.0.0.6
+```
+
+Not preferred for a domain client:
+
+```text
+8.8.8.8
+1.1.1.1
+```
+
+Public DNS servers can resolve Internet domains but do not contain the internal Active Directory records required by the `ad.home.com` domain.
+
+---
+
+# DNS Resolution Flow
+
+Internal DNS resolution follows this general path:
+
+```text
+Client01
+10.0.0.100
+     │
+     │ DNS Query
+     ▼
+DC1
+10.0.0.6
+     │
+     ├──────── Internal Name?
+     │              │
+     │              ▼
+     │      Resolve from
+     │      ad.home.com
+     │
+     └──────── External Name?
+                    │
+                    ▼
+                 pfSense
+                10.0.0.1
+                    │
+                    ▼
+             External DNS
+             Resolution
+```
+
+DC1 resolves internal Active Directory records locally.
+
+External requests can be forwarded through pfSense.
+
+---
+
+# DNS Forwarding
+
+DC1 is authoritative for internal domain records but still needs a method for resolving Internet names.
+
+The configured forwarding path is:
+
+```text
+Domain Client
+     │
+     ▼
+DC1
+10.0.0.6
+     │
+     ▼
+pfSense
+10.0.0.1
+     │
+     ▼
+External DNS Resolution
+```
+
+This allows clients to use a single DNS server while still resolving both:
+
+```text
+Internal Resources
+dc1.ad.home.com
+```
+
+and:
+
+```text
+External Resources
+github.com
+microsoft.com
+```
+
+---
+
+# DHCP Architecture
+
+DHCP is provided by DC1.
+
+Instead of manually configuring every workstation, DHCP allows client systems to automatically receive their network configuration.
+
+The general process is:
+
+```text
+Client
+   │
+   │ DHCP Request
+   ▼
+DC1
+DHCP Server
+   │
+   ▼
+Network Configuration
+```
+
+A DHCP configuration can provide values including:
+
+```text
+IPv4 Address
+Subnet Mask
+Default Gateway
+DNS Server
+DNS Domain
+```
+
+For a VLAN 10 domain client, the important configuration is:
+
+```text
+Network:         10.0.0.0/24
+Default Gateway: 10.0.0.1
+DNS Server:      10.0.0.6
+DNS Domain:      ad.home.com
+```
+
+The specific DHCP pool/range should be documented separately from the infrastructure addresses once the final scope configuration is recorded.
+
+---
+
+# Static vs Dynamic Addressing
+
+The lab uses a combination of static and dynamic addressing.
+
+## Static Addressing
+
+Static addresses are used for critical infrastructure.
+
+Examples include:
+
+```text
+pfSense
+SW1
+Proxmox
+DC1
+Wazuh
+```
+
+These systems must remain at known locations because other devices and services depend on them.
+
+## Dynamic Addressing
+
+DHCP is appropriate for systems where the exact address is less important.
+
+Examples include:
+
+```text
+Domain workstations
+Temporary lab systems
+Test machines
+Additional client devices
+```
+
+This reduces the amount of manual configuration required as the lab grows.
+
+---
+
+# Active Directory Domain
+
+The internal Windows domain is:
+
+```text
+ad.home.com
+```
+
+The NetBIOS domain name is:
+
+```text
+HOMELAB
+```
+
+The primary domain controller is:
+
+```text
+DC1
+```
+
+with the fully qualified domain name:
+
+```text
+dc1.ad.home.com
+```
+
+and IP address:
+
+```text
+10.0.0.6
+```
+
+---
+
+# Client DNS Configuration
+
+A domain client should normally show DC1 as its DNS server.
+
+Example:
+
+```text
+IPv4 Address:    10.0.0.x
+Subnet Mask:     255.255.255.0
+Default Gateway: 10.0.0.1
+DNS Server:      10.0.0.6
+DNS Suffix:      ad.home.com
+```
+
+This ensures that the workstation can locate Active Directory services.
+
+---
+
+# Testing Client Configuration
+
+Windows network configuration can be viewed using:
+
+```powershell
+ipconfig /all
+```
+
+Important values to verify include:
+
+```text
+IPv4 Address
+Subnet Mask
+Default Gateway
+DHCP Server
+DNS Server
+DNS Suffix
+```
+
+A domain client should be able to reach both the gateway and domain controller.
+
+---
+
+# Testing the Default Gateway
+
+From a Windows client:
+
+```powershell
+ping 10.0.0.1
+```
+
+A successful response confirms basic communication with pfSense.
+
+---
+
+# Testing the Cisco Switch
+
+```powershell
+ping 10.0.0.2
+```
+
+This confirms reachability to the switch management interface.
+
+---
+
+# Testing Proxmox
+
+```powershell
+ping 10.0.0.5
+```
+
+This confirms Layer 3 connectivity to the Proxmox host.
+
+---
+
+# Testing the Domain Controller
+
+```powershell
+ping 10.0.0.6
+```
+
+This confirms basic IP connectivity to DC1.
+
+However, successful ping responses alone do not prove that DNS or Active Directory services are functioning.
+
+---
+
+# Testing Wazuh
+
+```powershell
+ping 10.0.0.7
+```
+
+This confirms network reachability to the Wazuh server.
+
+Application-level connectivity should still be tested separately when troubleshooting Wazuh agents or the dashboard.
+
+---
+
+# Testing DNS Resolution
+
+Internal DNS can be tested using:
+
+```powershell
+nslookup dc1.ad.home.com
+```
+
+The expected DNS server should be:
+
+```text
+10.0.0.6
+```
+
+The result should resolve DC1 to its internal address.
+
+---
+
+# Testing Active Directory SRV Records
+
+Active Directory service discovery can be verified with:
+
+```powershell
+nslookup -type=SRV _ldap._tcp.dc._msdcs.ad.home.com
+```
+
+Successful results confirm that the domain's LDAP service records are available through DNS.
+
+These records are critical for domain-controller discovery.
+
+---
+
+# OpenVPN Remote-Access Network
+
+Remote VPN clients use a separate network from the primary LAB-LAN.
+
+The OpenVPN client network is:
+
+```text
+10.8.0.0/24
+```
+
+The OpenVPN server is hosted by pfSense.
+
+The basic traffic flow is:
+
+```text
+Remote Client
+     │
+     │ Internet
+     ▼
+pfSense
+OpenVPN Server
+     │
+     ▼
+10.8.0.0/24
+     │
+     ▼
+Internal Resources
+10.0.0.0/24
+```
+
+VPN users are therefore not placed directly into the `10.0.0.0/24` broadcast domain.
+
+---
+
+# Why the VPN Uses a Separate Subnet
+
+Using a dedicated VPN subnet makes remote access easier to identify and control.
+
+```text
+Remote Users
+10.8.0.0/24
+      │
+      ▼
+   pfSense
+      │
+ Firewall Rules
+      │
+      ▼
+Internal LAB-LAN
+10.0.0.0/24
+```
+
+This allows firewall rules to specifically target remote VPN clients.
+
+For example, policies can potentially distinguish between:
+
+```text
+Local LAB-LAN traffic
+```
+
+and:
+
+```text
+Remote VPN traffic
+```
+
+without treating both sources as the same network.
+
+---
+
+# Internal VPN Access
+
+Authorized OpenVPN clients can access internal lab resources through pfSense.
+
+Examples include:
+
+```text
+10.0.0.1   pfSense
+10.0.0.2   Cisco SW1
+10.0.0.5   Proxmox
+10.0.0.6   DC1
+10.0.0.7   Wazuh
+```
+
+Access remains subject to pfSense firewall and VPN configuration.
+
+---
+
+# Surfshark VPN Addressing Role
+
+The Surfshark OpenVPN connection has a different purpose from the remote-access VPN.
+
+Remote-access OpenVPN allows external systems to enter the lab securely:
+
+```text
+Remote User
+    │
+    ▼
+OpenVPN
+    │
+    ▼
+Home Lab
+```
+
+The Surfshark OpenVPN client allows selected internal traffic to leave the lab through a VPN provider:
+
+```text
+Internal Device
+     │
+     ▼
+pfSense
+     │
+     ▼
+Surfshark VPN
+     │
+     ▼
+Internet
+```
+
+These two VPN functions are separate even though both use OpenVPN technology.
+
+---
+
+# VLAN Addressing
+
+The network design currently includes:
+
+| VLAN | Name | Purpose | Status |
+|---|---|---|---|
+| VLAN 10 | LAB-LAN | Primary trusted network | Active |
+| VLAN 20 | IOT | IoT and smart devices | Active |
+| VLAN 99 | Management | Infrastructure management | Planned |
+| VLAN 1 | Default | Limited/default use | Existing |
+
+VLAN 10 currently uses:
+
+```text
+10.0.0.0/24
+```
+
+The exact final addressing plan for VLAN 99 will be documented when the dedicated management network is deployed.
+
+The final production subnet assigned to VLAN 20 should also be documented using the actual pfSense interface configuration rather than assuming an addressing scheme.
+
+---
+
+# VLANs and IP Subnets
+
+A VLAN operates at Layer 2.
+
+An IP subnet operates at Layer 3.
+
+For pfSense to route traffic between VLANs, each routed VLAN should have its own unique IP subnet.
+
+Conceptually:
+
+```text
+VLAN 10
+LAB-LAN
+Subnet A
+    │
+    ▼
+ pfSense
+    ▲
+    │
+VLAN 20
+IOT
+Subnet B
+```
+
+Traffic crossing between these networks must pass through pfSense.
+
+This allows firewall rules to control communication between security zones.
+
+---
+
+# Why One Routed VLAN Should Use One Subnet
+
+Consider two security zones:
+
+```text
+VLAN 10
+Trusted Infrastructure
+```
+
+and:
+
+```text
+VLAN 20
+IoT Devices
+```
+
+If both were treated as one Layer 3 network, pfSense would have less ability to enforce routing policies between them.
+
+Using separate subnets allows pfSense to operate as the Layer 3 boundary:
+
+```text
+IoT Device
+    │
+    ▼
+VLAN 20
+    │
+    ▼
+pfSense
+    │
+ Firewall
+    │
+    ▼
+VLAN 10
+    │
+    ▼
+Trusted Resource
+```
+
+This provides a foundation for security segmentation.
+
+---
+
+# Network Dependency Chain
+
+The lab contains several service dependencies.
+
+For example:
+
+```text
+Client01
+   │
+   ├── DNS ──────────────► DC1
+   │                       10.0.0.6
+   │
+   ├── Authentication ───► DC1
+   │
+   ├── Group Policy ─────► DC1
+   │
+   └── Internet ─────────► pfSense
+                           10.0.0.1
+```
+
+DC1 also depends on pfSense for external network access and DNS forwarding:
+
+```text
+DC1
+10.0.0.6
+   │
+   ▼
+pfSense
+10.0.0.1
+   │
+   ▼
+External Network
+```
+
+Proxmox similarly depends on pfSense as its default gateway:
+
+```text
+Proxmox
+10.0.0.5
+   │
+   ▼
+pfSense
+10.0.0.1
+```
+
+Understanding these dependencies is important during troubleshooting.
+
+---
+
+# DNS Troubleshooting
+
+One of the major lessons from building the environment was that a DNS failure can appear to be a general network outage.
+
+For example, this may work:
+
+```powershell
+ping 1.1.1.1
+```
+
+while this fails:
+
+```powershell
+ping example.com
+```
+
+In this situation, basic IP routing may still be operational.
+
+The problem is more likely related to DNS resolution.
+
+---
+
+# DNS Troubleshooting Path
+
+The DNS path in this environment can be tested in order:
+
+```text
+Client
+   │
+   ▼
+DC1
+10.0.0.6
+   │
+   ▼
+pfSense
+10.0.0.1
+   │
+   ▼
+External Resolver
+```
+
+This allows the failure to be isolated to:
+
+```text
+Client configuration
+        │
+DC1 DNS service
+        │
+DNS forwarding
+        │
+pfSense DNS/routing
+        │
+External connectivity
+```
+
+---
+
+# IP Troubleshooting Methodology
+
+When a device cannot communicate, IP configuration should be verified before modifying firewall rules.
+
+A useful troubleshooting sequence is:
+
+```text
+1. Check IP Address
+        │
+        ▼
+2. Check Subnet Mask
+        │
+        ▼
+3. Check Default Gateway
+        │
+        ▼
+4. Check DNS Server
+        │
+        ▼
+5. Ping Local Gateway
+        │
+        ▼
+6. Ping Internal Resource
+        │
+        ▼
+7. Test DNS Resolution
+        │
+        ▼
+8. Inspect pfSense Rules / Routing
+```
+
+This helps prevent Layer 3 or DNS problems from being mistaken for firewall problems.
+
+---
+
+# Troubleshooting with `ipconfig`
+
+On Windows:
+
+```powershell
+ipconfig /all
+```
+
+should be one of the first commands used.
+
+If the client has an unexpected address, incorrect gateway, or incorrect DNS server, the problem may already be identified before checking pfSense or the switch.
+
+---
+
+# Troubleshooting with `nslookup`
+
+The configured DNS server can be tested with:
+
+```powershell
+nslookup
+```
+
+or a specific query:
+
+```powershell
+nslookup dc1.ad.home.com
+```
+
+For a domain client, the server answering the request should normally be DC1:
+
+```text
+10.0.0.6
+```
+
+---
+
+# Troubleshooting by IP vs Hostname
+
+A useful diagnostic comparison is:
+
+```powershell
+ping 10.0.0.6
+```
+
+versus:
+
+```powershell
+ping dc1.ad.home.com
+```
+
+If the IP address works but the hostname fails, the underlying network path may be healthy while DNS is malfunctioning.
+
+This distinction became important during previous DNS outages in the lab.
+
+---
+
+# Security Benefits of Organized Addressing
+
+IP addressing does not provide security by itself.
+
+However, a documented addressing strategy makes security controls easier to implement.
+
+Predictable infrastructure addresses help with:
+
+```text
+Firewall Rules
+SIEM Analysis
+Access Control
+Network Monitoring
+Troubleshooting
+VPN Policies
+Asset Identification
+Vulnerability Scanning
+```
+
+For example, traffic involving:
+
+```text
+10.0.0.6
+```
+
+can immediately be recognized as traffic involving the domain controller.
+
+Similarly:
+
+```text
+10.0.0.7
+```
+
+identifies the Wazuh SIEM server.
+
+---
+
+# Addressing and Firewall Rules
+
+Static addressing is particularly useful for pfSense policies.
+
+Instead of relying on changing client addresses, firewall policies can reference known infrastructure systems.
+
+Conceptually:
+
+```text
+Source
+10.0.0.x
+     │
+     ▼
+pfSense Rule
+     │
+     ▼
+Destination
+10.0.0.6
+```
+
+This becomes increasingly important as additional VLANs and security zones are introduced.
+
+---
+
+# Addressing and Security Monitoring
+
+Known IP assignments also simplify security analysis.
+
+For example:
+
+```text
+10.0.0.5 = Proxmox
+10.0.0.6 = DC1
+10.0.0.7 = Wazuh
+10.0.0.8 = Nessus
+```
+
+When these addresses appear in firewall logs or SIEM events, the associated asset can be identified quickly.
+
+This improves investigation speed and reduces ambiguity.
+
+---
+
+# Future Addressing Improvements
+
+As the environment continues to grow, the addressing strategy will become more segmented.
+
+Planned improvements include:
+
+- Deploying a dedicated VLAN 99 management subnet
+- Recording the final VLAN 20 subnet
+- Documenting DHCP scopes
+- Adding DHCP reservations where appropriate
+- Separating additional servers from user workstations
+- Restricting management interfaces to dedicated administrative networks
+- Maintaining a centralized IP address inventory
+- Documenting future security-tool networks
+- Updating architecture diagrams as new subnets are introduced
+
+Potential future segmentation may include dedicated networks for:
+
+```text
+Servers
+Security Tools
+Guest Devices
+Management Systems
+```
+
+Any future subnet assignments will be documented only after they are actually implemented.
+
+---
+
+# Current Addressing Summary
+
+```text
+LAB-LAN
+Network:      10.0.0.0/24
+Gateway:      10.0.0.1
+DNS:          10.0.0.6
+Domain:       ad.home.com
+
+Infrastructure:
+
+10.0.0.1      pfSense
+10.0.0.2      Cisco SW1
+10.0.0.5      Proxmox
+10.0.0.6      DC1
+10.0.0.7      Wazuh
+10.0.0.8      Nessus (Planned)
+10.0.0.100    Client01
+10.0.0.101    Jump PC
+
+Remote Access VPN:
+
+10.8.0.0/24   OpenVPN Clients
+```
+
+---
+
+# What I Learned
+
+Building and troubleshooting the IP architecture reinforced how closely related network services are in an enterprise environment.
+
+Important lessons included:
+
+- Critical infrastructure benefits from predictable IP addressing
+- DHCP reduces administrative overhead for client systems
+- The default gateway determines how traffic leaves a local subnet
+- Active Directory relies heavily on DNS
+- Domain clients should use Active Directory DNS
+- DNS forwarding allows internal and external name resolution to coexist
+- VPN clients can use a separate routed subnet
+- Routed VLANs require unique IP networks
+- DNS failures can appear to be broader network failures
+- Static infrastructure addresses simplify firewall configuration
+- Organized addressing improves security monitoring
+- Network dependencies must be understood before troubleshooting service failures
+
+The most important lesson was that **IP addressing, routing, DNS, DHCP, Active Directory, VLANs, and firewall policies are interconnected**.
+
+A configuration issue in one service can affect multiple systems throughout the environment.
+
+---
+
+# Related Documentation
+
+[← VLAN Design and Network Segmentation](vlan-design.md)
+
+[← Cisco Switch Configuration](cisco-switch.md)
+
+[← Network Architecture](network-architecture.md)
+
+[← Main Project README](../README.md)
