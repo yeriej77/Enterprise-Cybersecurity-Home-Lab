@@ -1,1 +1,10 @@
+# IP Addressing and Network Services
 
+## Overview
+
+The home lab uses a structured IPv4 addressing plan so that critical infrastructure remains predictable while end-user systems can receive addresses dynamically.
+
+The primary LAB-LAN network is:
+
+```text
+10.0.0.0/24
