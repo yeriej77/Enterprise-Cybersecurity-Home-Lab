@@ -1,4 +1,4 @@
-# Active Directory, DNS and DHCP
+# Active Directory, DNS, and DHCP
 
 ## Overview
 
